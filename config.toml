@@ -1,6 +1,6 @@
 [video]
-scale = 4 # 0~4
-show_debug = false
+scale = 3 # 0~4
+show_debug = true
 
 [gamepad]
 enabled = true

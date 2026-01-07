@@ -11,6 +11,10 @@ It was developed with assistance from **ChatGPT**.
 
 ---
 
+![GoMeBoy thumbnail](thumbnail.png)
+
+---
+
 ## How to Launch
 
     go run ./cmd/gomeboy/main.go <rom_path>
