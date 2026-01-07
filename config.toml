@@ -1,0 +1,19 @@
+[video]
+scale = 4 # 0~4
+show_debug = false
+
+[gamepad]
+enabled = true
+
+# Value = ebiten.GamepadButtonXX
+# (XX = 0~31)
+bind = [
+  2,  # A
+  0,  # B
+  10, # SELECT
+  11, # START
+  13, # RIGHT
+  15, # LEFT
+  12, # UP
+  14  # DOWN
+]

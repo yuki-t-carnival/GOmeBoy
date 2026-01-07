@@ -1,0 +1,17 @@
+# Go
+/bin/
+*.exe
+*.test
+
+# Ebiten
+*.syso
+
+# Config (個人設定)
+#config.toml
+
+# Editor
+.vscode/
+
+assets/
+rom/
+*.gb
