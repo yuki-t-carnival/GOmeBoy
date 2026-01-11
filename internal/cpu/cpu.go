@@ -19,7 +19,6 @@ type CPU struct {
 	isIMEEnabled bool
 	imeDelay     int
 	cycles       int
-	intVectors   [5]uint16
 	isHaltBug    bool
 	prevIF       byte
 }
@@ -29,15 +28,14 @@ func NewCPU(b *bus.Bus) *CPU {
 		Bus: b,
 		pc:  0x100,
 		sp:  0xFFFE,
-
-		// IFでの割り込みで使用
-		intVectors: [5]uint16{
-			0x40,
-			0x48,
-			0x50,
-			0x58,
-			0x60,
-		},
+		a:   0x01,
+		f:   0xB0,
+		b:   0x00,
+		c:   0x13,
+		d:   0x00,
+		e:   0xD8,
+		h:   0x01,
+		l:   0x4D,
 	}
 	return c
 }
@@ -45,31 +43,42 @@ func NewCPU(b *bus.Bus) *CPU {
 func (c *CPU) Step() int {
 	c.cycles = 0
 
-	// STOP状態は、何かしらの入力があったとき解除される。
-	if c.IsStopped {
-		if c.Bus.Joypad.HasStateChanged {
-			c.IsStopped = false
-		} else {
-			return 4 // ebitenのUpdate()を回すため
-		}
-	}
+	c.checkIRQ()
 
-	// 各ハードのIRQに応じて､IFレジスタのビットを立てる
-	c.updateIF()
-
-	// IFに立ち上がったbitがあればHALT解除
-	if c.isHalted {
-		curIF := c.read(bus.IF) & 0x1F
-		c.isHalted = (^c.prevIF & curIF & 0x1F) == 0
-		c.prevIF = curIF
+	// During DMA transfer, only check for interrupts
+	if c.Bus.IsDMATransferInProgress {
+		c.Bus.DMATransfer()
 		return 4
 	}
 
-	// フェッチ・実行
+	// STOP is not implemented
+	// Stop mode ends when any input is received
+	/* if c.IsStopped {
+		if c.Bus.Joypad.HasStateChanged {
+			c.IsStopped = false
+		} else {
+			return 4 // When set to 0, g.Update() does not finish
+		}
+	} */
+
+	// HALT ends when any bit is set in IF
+	if c.isHalted {
+		if (c.read(bus.IF) & 0x1F) != 0 {
+			c.isHalted = false
+		} else {
+			c.cycles += 4
+			return c.cycles
+		}
+	}
+
+	if c.handleInterrupt() {
+		return c.cycles
+	}
+
 	op := c.fetchOpcode()
 	OpTable[op].fn(c)
 
-	// EIでIME=trueにするときの､反映までの遅延処理
+	// For EI
 	if c.imeDelay > 0 {
 		c.imeDelay--
 		if c.imeDelay == 0 {
@@ -77,10 +86,6 @@ func (c *CPU) Step() int {
 		}
 	}
 
-	// 割り込み処理
-	c.handleInterrupt()
-
-	// 費やしたcycle数を返す
 	return c.cycles
 }
 
@@ -163,12 +168,14 @@ func (c *CPU) SetFlagC(b bool) {
 
 func (c *CPU) fetchOpcode() byte {
 	op := c.read(c.pc)
-	if c.isHaltBug {
+	c.pc++
+	return op
+	// TODO: Implement the HALT bug
+	/* if c.isHaltBug {
 		c.isHaltBug = false
 	} else {
 		c.pc++
-	}
-	return op
+	} */
 }
 
 func (c *CPU) read(addr uint16) byte {
@@ -190,33 +197,34 @@ func (c *CPU) fetch16() uint16 {
 	return uint16(hi)<<8 | uint16(lo)
 }
 
-func (c *CPU) handleInterrupt() {
+func (c *CPU) handleInterrupt() bool {
 	if !c.isIMEEnabled {
-		return
+		return false
 	}
 
-	// 有効な割込があるかチェック
+	// allowed interrupts == IME & IEbit & IFbit
 	curIE := c.read(bus.IE) & 0x1F
 	curIF := c.read(bus.IF) & 0x1F
 	pending := curIE & curIF
 	if pending == 0 {
-		return
+		return false
 	}
 
-	// PCを該当する割り込みベクタにセット
-	for i, v := range c.intVectors {
+	// PC set to $40, $48, $50, $58, $60, if interrupts are enabled
+	for i := 0; i < 5; i++ {
 		if (pending & (1 << i)) != 0 {
-			c.write(bus.IF, curIF & ^(1<<i)) // 割り込みに入る前に､IFを解除
-			c.isIMEEnabled = false           // 他の割り込みを禁止する
+			c.write(bus.IF, curIF & ^(1<<i)) // Clear IF bit before the interrupt
+			c.isIMEEnabled = false           // Disable IME before the interrupt
 			c.push(c.pc)
-			c.pc = v
+			c.pc = 0x40 + 0x08*uint16(i)
 			c.cycles += 20
-			break
+			return true
 		}
 	}
+	return false
 }
 
-func (c *CPU) updateIF() {
+func (c *CPU) checkIRQ() {
 	if c.Bus.PPU.HasVBlankIRQ {
 		newIF := c.read(bus.IF) | (1 << 0)
 		c.write(bus.IF, newIF)

@@ -1,41 +1,13 @@
-// ================== PPU Memo =========================================
-// ------------------ LCD Position and Scrolling -----------------------
-// Viewport==Gameboy画面とする｡
-// BGMap上の､Viewportの左上座標が(SCX, SCY)｡ wrapする｡
-// Viewport上の､Windowの左上座標が(WX-7, WY)｡ wrapしない｡
-//
-// ------------------ Object -------------------------------------------
-// PPUのOAMに40個分のobject情報（Y, X, TileIndex, Attributeの4Bytes）がある｡計160Bytes
-// ObjectのTileDataのアドレス始点は､常に0x8000
-// ObjcetはTileSizeが8x8､8x16と選べる(LCDCbit2)
-//
-// ------------------ Background / Window ------------------------------
-// BG/WindowのTileMapは､32*32=256タイル分あり､1タイルにつき1ByteのTileDataIndexが入る｡計256Bytes
-// BGのTileMapのアドレス始点は､LCDCbit3で設定
-// WindowのTileMapのアドレス始点は､LCDCbit6で設定
-// BG/WindowのTileDataのアドレス始点は､両方LCDCbit4で設定
-// BG/WindowのTileSizeは常に8x8
-//
-// ------------------ Tile ---------------------------------------------
-// Tileは1Byteずつ､Row0(Plane0), Row0(plane1), Row1(plane0)...とデータが並んでいる｡
-// なので､8x8なら16Bytes､8x16(Objのみ)なら32Bytes｡
-// plane0は重みが1､plane1は重みが2｡なので､0~3の計4階調｡
-//
-// ------------------ Cycles -------------------------------------------
-// 4194304cycles / 59.73Frames
-//	70221cycles / Frame(154Lines)
-//	  456cycles / Line
-
 package ppu
 
 import "gomeboy/internal/util"
 
 const (
-	// BG/Window共通関数用の用途別ID
+	// ID for BG/Window common functions
 	BG     = 0
 	Window = 1
 
-	// Paletteの種類
+	// Kinds of palette
 	BGP  = 0
 	OBP0 = 1
 	OBP1 = 2
@@ -43,8 +15,8 @@ const (
 
 type PPU struct {
 	// LCD
-	vp [160 * 144]Pixel // Raw
-	FB []byte           // 色変換済み
+	vp [160 * 144]Pixel // Color Num
+	FB []byte           // After Resolve palette
 
 	// PPU Memory
 	vram [2][0x2000]byte
@@ -71,7 +43,7 @@ type PPU struct {
 
 	// PPU Internal Counters
 	wly    int
-	cycles int // 実機は再現してない
+	cycles int
 
 	// Interrupt
 	HasSTATIRQ    bool
@@ -87,6 +59,8 @@ type PPU struct {
 	plBGP  [4]uint8
 	plOBP0 [4]uint8
 	plOBP1 [4]uint8
+
+	hasTransferRq bool
 }
 
 type Pixel struct {
@@ -113,7 +87,7 @@ func NewPPU() *PPU {
 	return p
 }
 
-// 1ByteをXFlip（水平反転）したときの結果を､負荷軽減のためLUT化する｡（Obj用）
+// For Object
 func (p *PPU) createXFlipLUT() {
 	result := byte(0)
 	for i := 0; i < 256; i++ {
@@ -128,7 +102,7 @@ func (p *PPU) createXFlipLUT() {
 }
 
 func (p *PPU) Step(cpuCycles int) {
-	// PPU Disableの場合
+	// In case of PPU disabled
 	if p.lcdcBits[7] == 0 {
 		p.prevLY = p.ly
 		p.ly = 0
@@ -136,38 +110,45 @@ func (p *PPU) Step(cpuCycles int) {
 		return
 	}
 
-	// LYC==LY Int監視
-	p.stat = (p.stat &^ byte(1<<2)) // LYC==LYビットクリア
+	// Check LYC==LY Interrupts
+	p.stat = (p.stat &^ byte(1<<2)) // LYC==LY bit clear
 	if p.lyc == p.ly {
 		p.stat |= 1 << 2
 		isLYCIntSel := (p.stat & byte(1<<6)) != 0
-		if isLYCIntSel && !p.isLockLYCInt { // LYC == LY && LYCint有効なら､STAT IRQ（初回のみ）
+		if isLYCIntSel && !p.isLockLYCInt { // LYC==LY && LYCint enabled
 			p.HasSTATIRQ = true
 			p.isLockLYCInt = true
 		}
 	}
 
 	switch {
-	// LY 0~143 の間は PPU Mode 2>3>0 LY++ 2>3>0 LY++ を繰り返す
-	case p.ly <= 143 && p.ly != p.prevLY: // LYが変わった初回に一気に処理
-		p.setMode(2)
-		p.oamSearch()
-		p.setMode(3)
-		p.pixelTransfer()
-		p.setMode(0)
-
-	// LY 144~153は､ ずっとPPU Mode1 (VBlank)
-	case p.ly == 144 && p.ly != p.prevLY: // LYが変わった初回に一気に処理
-		p.setMode(1)
-		p.HasVBlankIRQ = true
-		p.wly = 0
+	// During the period LY=0~143, repeat Mode2>3>0> every LY
+	case p.ly <= 143:
+		if p.ly != p.prevLY {
+			p.hasTransferRq = true
+		}
+		// When starting with cycle=0, some settings may not be applied
+		if p.hasTransferRq && p.cycles >= 280 {
+			p.setPPUMode(2)
+			p.oamSearch()
+			p.setPPUMode(3)
+			p.pixelTransfer()
+			p.setPPUMode(0)
+			p.hasTransferRq = false
+		}
+	// VBlank during LY=144~153 (VBlank IRQ occurs only once when LY=144)
+	case p.ly == 144:
+		if p.ly != p.prevLY {
+			p.setPPUMode(1)
+			p.HasVBlankIRQ = true
+			p.wly = 0
+		}
 	}
 	p.prevLY = p.ly
 
-	// Mode Int監視
-	p.handleModeIRQ()
+	p.checkSTATInt()
 
-	// 456cycles経過したら､LY++
+	// 1 Line == 456 CPU cycles
 	p.cycles += cpuCycles
 	if p.cycles >= 456 {
 		p.cycles -= 456
@@ -179,7 +160,7 @@ func (p *PPU) Step(cpuCycles int) {
 	}
 }
 
-// FBをLYの1行分だけ更新
+// Update the frame buffer by one line
 func (p *PPU) pixelTransfer() {
 	// init vp
 	base := int(p.ly) * 160
@@ -219,36 +200,32 @@ func (p *PPU) pixelTransfer() {
 	p.resolvePalette()
 }
 
-// STATの下位2bitに現在のPPU Modeをセットする
-func (p *PPU) setMode(nextMode int) {
+func (p *PPU) setPPUMode(nextMode int) {
 	p.stat = (p.stat & 0x7C) | (byte(nextMode) & 0x03)
 	p.isLockModeInt = false
 }
 
-// PPU Modeに応じて、必要ならSTAT IRQを出す
-func (p *PPU) handleModeIRQ() {
+func (p *PPU) checkSTATInt() {
 	mode := p.stat & 0x03
-	// 現在のモードに対応したMode int selectのbitが立っていて、
-	// かつ、前回からモードが変更されたか、Mode int selectが0から1に変わった初回のみ、STAT IRQ。
-	bit := p.stat&(1<<(mode+3)) != 0
-	if bit && !p.isLockModeInt {
-		// STAT IRQ
+	isIntEnabled := p.stat&(1<<(mode+3)) != 0
+	if isIntEnabled && !p.isLockModeInt {
 		p.HasSTATIRQ = true
 		p.isLockModeInt = true
 	}
 }
 
-// 現在のLYで描画対象のObjectを最大10個リストアップする｡
+// Lists 0~10 objects to be drawn on the current line
 func (p *PPU) oamSearch() {
 	p.objList = p.objList[:0] // =[]int{}
 
 	bigMode := p.lcdcBits[2] == 1
 	ly := int(p.ly)
 
-	// 選定の優先順位は完全にOAM昇順
+	// List the objects in ascending OAM index order
 	for i := 0; i < 40; i++ {
 
-		y0 := int(p.oam[i<<2+0]) - 16 // Obj(i)の､Viewport上のY始点
+		// Y origin of Object(i) on the viewport
+		y0 := int(p.oam[i<<2+0]) - 16
 
 		var objHeight int
 		if bigMode {
@@ -257,10 +234,10 @@ func (p *PPU) oamSearch() {
 			objHeight = 8
 		}
 
-		// Obj(i)のY座標が､LYにかかっていればリストに加える
+		// If part of the Y Position of Object(i) == LY, add it to the list
 		if ly >= y0 && ly < (y0+objHeight) {
 			p.objList = append(p.objList, i)
-			// 10個の時点で終了
+			// Ends when 10 objcets are found
 			if len(p.objList) == 10 {
 				return
 			}
@@ -268,38 +245,36 @@ func (p *PPU) oamSearch() {
 	}
 }
 
-// 描画対象のObjectを､LY行分だけvpに描く
+// Draw the current line objects listed by oamSearch() to vp
 func (p *PPU) objectsTransfer() {
 	ly := int(p.ly)
 
-	// Objectの描画リストをX降順（同位ならOAMindex降順）で並び替える｡
-	// （描画の優先順位は昇順なので､描画順としては降順になる）
+	// Sort the list X Position DESC or OAM index DESC
 	sortedList := []int{}
 	for _, oami := range p.objList {
-		pos := len(sortedList) // 並び替え後のスライスのindex(初期値は最後尾)
+		insPos := len(sortedList)
 		for j, oamj := range sortedList {
-			if p.oam[oami<<2+1] >= p.oam[oamj<<2+1] { // >=なのは､Xが同じの場合でも､OAMは大きいはずだから）
-				pos = j
-				break // 後ろはすべてx降順で勝ってるのでやらない
+			if p.oam[oami<<2+1] >= p.oam[oamj<<2+1] {
+				insPos = j
+				break
 			}
 		}
-		sortedList = util.InsertSlice(sortedList, pos, oami) // ねじ込み処理
+		sortedList = util.InsertSlice(sortedList, insPos, oami)
 	}
 
-	// 並び替えたリストでFBに書き込んでいく
+	// Draw objects to vp in the order sorted above
 	for _, oamIdx := range sortedList {
 
-		// Objectごとに、4byte分のObject属性を取り出す
+		// Get Object attribytes in the OAM
 		base := uint16(oamIdx << 2)
-		y0 := int(p.oam[base]) - 16
-		x0 := int(p.oam[base+1]) - 8
-		idx := p.oam[base+2]
-		attr := p.oam[base+3]
+		y0 := int(p.oam[base]) - 16  // Byte 0 - Y Position
+		x0 := int(p.oam[base+1]) - 8 // Byte 1 - X Position
+		idx := p.oam[base+2]         // Byte 2 - Tile Index
+		attr := p.oam[base+3]        // Byte 3 - Attributes/Flags
 		tilePy := ly - y0
 
 		data := [2]byte{}
 		data = p.getObjectTile(idx, attr, tilePy)
-		pri := (attr & (1 << 7)) >> 7
 
 		var pl uint8
 		if (attr & (1 << 4)) == 0 {
@@ -308,7 +283,7 @@ func (p *PPU) objectsTransfer() {
 			pl = OBP1
 		}
 
-		// 取得したタイルの1行をFBに貼る
+		// Draw tileData(one row) on vp
 		tgtY := ly * 160
 		for b := 0; b < 8; b++ {
 			tgtX := x0 + b
@@ -318,16 +293,17 @@ func (p *PPU) objectsTransfer() {
 			tgt := tgtY + tgtX
 			bgwNum := p.vp[tgt].num
 
-			// Objectが下に隠れる場合
+			// In the case below, the Object pixel is hidden under the BG/W
+			pri := (attr & (1 << 7)) >> 7
 			if pri == 1 && bgwNum != 0 {
 				continue
 			}
-			// 4階調モノクロ（2bit）
+			// 2-bit monochrome (DMG)
 			lo := (data[0] >> (7 - b)) & 1
 			hi := (data[1] >> (7 - b)) & 1
 			num := (hi << 1) | lo
 
-			// Objectは0のピクセルは透明色
+			// When a tile is used in an object, ID 0 means transparent
 			if num == 0 {
 				continue
 			}
@@ -338,12 +314,12 @@ func (p *PPU) objectsTransfer() {
 	}
 }
 
-// TileDataをObjectとして､tilePyの行だけ取得する
+// Get one row of tileData as an object
 func (p *PPU) getObjectTile(idx, attr byte, tilePy int) [2]byte {
 	isYFlip := attr&(1<<6) != 0
 	isXFlip := attr&(1<<5) != 0
-	if p.lcdcBits[2] == 1 {
-		idx &= 0xFE // OBJ size が 8x16 のときはindexは偶数のみ
+	if p.lcdcBits[2] == 1 { // OBJ size
+		idx &= 0xFE // When 8x16, idx is masked to even numbers only
 		if isYFlip {
 			tilePy = 15 - tilePy
 		}
@@ -364,7 +340,7 @@ func (p *PPU) getObjectTile(idx, attr byte, tilePy int) [2]byte {
 	return data
 }
 
-// BackgroundのLY行分だけ､FBに描く
+// Draw the current line background to vp
 func (p *PPU) BGTransfer() {
 	var data [2]byte
 	vpIdxY := int(p.ly) * 160
@@ -375,7 +351,7 @@ func (p *PPU) BGTransfer() {
 		bgX := byte(x) + p.scx // wrapされる
 		tilePx := bgX & 0x07   // =%8
 
-		// Viewportの左端か､MapTileが変わるときだけ､tileDataを取得する（節約）
+		// Get tileData only when needed
 		if x == 0 || tilePx == 0 {
 			bgCol := int(bgX) >> 3
 			bgIdx := bgRow<<5 + bgCol // <<5 == *32
@@ -389,7 +365,7 @@ func (p *PPU) BGTransfer() {
 	}
 }
 
-// WindowのLY行分だけ､FBに描く
+// Draw the current line Window to vp
 func (p *PPU) WindowTransfer() bool {
 	var isDrawn bool
 	var data [2]byte
@@ -400,7 +376,7 @@ func (p *PPU) WindowTransfer() bool {
 		bgX := x - (int(p.wx) - 7)
 		tilePx := bgX & 0x07 // =%8
 
-		// Viewportの左端か､MapTileが変わるときだけ､tileDataを取得する（節約）
+		// Get tileData only when needed
 		if x == 0 || tilePx == 0 {
 			wCol := bgX >> 3
 			wIdx := wRow<<5 + wCol // <<5 == *32
@@ -419,7 +395,7 @@ func (p *PPU) WindowTransfer() bool {
 	return isDrawn
 }
 
-// Map(idx)のTileDataをBG/Window MapTileとして､pyの行だけ取得する
+// Get one row of tileData as background or window
 func (p *PPU) getBGWTile(bgwID, idx, py int) [2]byte {
 	var mapStart uint16
 	var addrType int
@@ -443,14 +419,14 @@ func (p *PPU) getBGWTile(bgwID, idx, py int) [2]byte {
 	} else {
 		tileStart = uint16(tileIdx) << 4
 	}
-	tileAddr := tileStart + (uint16(py*2) & 0x1FFF) // Out of range対策
+	tileAddr := tileStart + uint16(py*2)
 	return [2]byte{
-		p.vram[p.bank][tileAddr],
-		p.vram[p.bank][tileAddr+1],
+		p.ReadVRAM(tileAddr),
+		p.ReadVRAM(tileAddr + 1),
 	}
 }
 
-// vpを色変換してFBに描く
+// After color conversion, transfer vp to the frame buffer
 func (p *PPU) resolvePalette() {
 	tgtBase := int(p.ly) * 160
 	for x := 0; x < 160; x++ {
@@ -471,12 +447,12 @@ func (p *PPU) resolvePalette() {
 }
 
 func (p *PPU) ReadVRAM(addr uint16) byte {
-	offset := addr & 0x1FFF // Out of range対策
+	offset := addr & 0x1FFF // To prevent out of range errors
 	return p.vram[p.bank][offset]
 }
 
 func (p *PPU) WriteVRAM(addr uint16, val byte) {
-	offset := addr & 0x1FFF // Out of range対策
+	offset := addr & 0x1FFF // To prevent out of range errors
 	p.vram[p.bank][offset] = val
 }
 
@@ -493,10 +469,6 @@ func (p *PPU) ReadOAM(addr uint16) byte {
 }
 func (p *PPU) WriteOAM(addr uint16, val byte) {
 	p.oam[addr] = val
-}
-
-func (p *PPU) DMATransfer(data *[160]byte) {
-	p.oam = *data
 }
 
 func (p *PPU) GetDMA() byte {
@@ -530,7 +502,9 @@ func (p *PPU) GetSTAT() byte {
 
 func (p *PPU) SetSTAT(val byte) {
 	p.stat = (val & 0x7C) | (p.stat & 0x03)
-	p.handleModeIRQ() // ModeごとにSTATIRQ判定
+
+	// If any Mode int select is changed, check for interrupts
+	p.checkSTATInt()
 }
 
 func (p *PPU) GetLY() byte {

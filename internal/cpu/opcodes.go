@@ -217,7 +217,7 @@ var OpTable = [256]OpEntry{
 	0xD0: {fn: func(c *CPU) { c.opRET_NC() }, Name: "RET NC"},
 	0xD1: {fn: func(c *CPU) { c.opPOP_DE() }, Name: "POP DE"},
 	0xD2: {fn: func(c *CPU) { c.opJP_NC_a16() }, Name: "JP NC, a16"},
-	0xD3: {fn: func(c *CPU) { c.opNOP() }, Name: ""}, // 未定義
+	0xD3: {fn: func(c *CPU) { c.opNOP(); c.IsPanic = true }, Name: ""}, // 未定義
 	0xD4: {fn: func(c *CPU) { c.opCALL_NC_a16() }, Name: "CALL NC, a16"},
 	0xD5: {fn: func(c *CPU) { c.opPUSH_DE() }, Name: "PUSH DE"},
 	0xD6: {fn: func(c *CPU) { c.opSUB_A_n8() }, Name: "SUB A, n8"},
@@ -225,32 +225,32 @@ var OpTable = [256]OpEntry{
 	0xD8: {fn: func(c *CPU) { c.opRET_C() }, Name: "RET C"},
 	0xD9: {fn: func(c *CPU) { c.opRETI() }, Name: "RETI"},
 	0xDA: {fn: func(c *CPU) { c.opJP_C_a16() }, Name: "JP C, a16"},
-	0xDB: {fn: func(c *CPU) { c.opNOP() }, Name: ""}, // 未定義
+	0xDB: {fn: func(c *CPU) { c.opNOP(); c.IsPanic = true }, Name: ""}, // 未定義
 	0xDC: {fn: func(c *CPU) { c.opCALL_C_a16() }, Name: "CALL C, a16"},
-	0xDD: {fn: func(c *CPU) { c.opNOP() }, Name: ""}, // 未定義
+	0xDD: {fn: func(c *CPU) { c.opNOP(); c.IsPanic = true }, Name: ""}, // 未定義
 	0xDE: {fn: func(c *CPU) { c.opSBC_A_n8() }, Name: "SBC A, n8"},
 	0xDF: {fn: func(c *CPU) { c.opRST_18() }, Name: "RST $18"},
 	0xE0: {fn: func(c *CPU) { c.opLDH_aa8_A() }, Name: "LDH [a8], A"},
 	0xE1: {fn: func(c *CPU) { c.opPOP_HL() }, Name: "POP HL"},
 	0xE2: {fn: func(c *CPU) { c.opLDH_aC_A() }, Name: "LDH [C], A"},
-	0xE3: {fn: func(c *CPU) { c.opNOP() }, Name: ""}, // 未定義
-	0xE4: {fn: func(c *CPU) { c.opNOP() }, Name: ""}, // 未定義
+	0xE3: {fn: func(c *CPU) { c.opNOP(); c.IsPanic = true }, Name: ""}, // 未定義
+	0xE4: {fn: func(c *CPU) { c.opNOP(); c.IsPanic = true }, Name: ""}, // 未定義
 	0xE5: {fn: func(c *CPU) { c.opPUSH_HL() }, Name: "PUSH HL"},
 	0xE6: {fn: func(c *CPU) { c.opAND_A_n8() }, Name: "AND A, n8"},
 	0xE7: {fn: func(c *CPU) { c.opRST_20() }, Name: "RST $20"},
 	0xE8: {fn: func(c *CPU) { c.opADD_SP_e8() }, Name: "ADD SP, e8"},
 	0xE9: {fn: func(c *CPU) { c.opJP_HL() }, Name: "JP HL"},
 	0xEA: {fn: func(c *CPU) { c.opLD_aa16_A() }, Name: "LD [a16], A"},
-	0xEB: {fn: func(c *CPU) { c.opNOP() }, Name: ""}, // 未定義
-	0xEC: {fn: func(c *CPU) { c.opNOP() }, Name: ""}, // 未定義
-	0xED: {fn: func(c *CPU) { c.opNOP() }, Name: ""}, // 未定義
+	0xEB: {fn: func(c *CPU) { c.opNOP(); c.IsPanic = true }, Name: ""}, // 未定義
+	0xEC: {fn: func(c *CPU) { c.opNOP(); c.IsPanic = true }, Name: ""}, // 未定義
+	0xED: {fn: func(c *CPU) { c.opNOP(); c.IsPanic = true }, Name: ""}, // 未定義
 	0xEE: {fn: func(c *CPU) { c.opXOR_A_n8() }, Name: "XOR A, n8"},
 	0xEF: {fn: func(c *CPU) { c.opRST_28() }, Name: "RST $28"},
 	0xF0: {fn: func(c *CPU) { c.opLDH_A_aa8() }, Name: "LDH A, [a8]"},
 	0xF1: {fn: func(c *CPU) { c.opPOP_AF() }, Name: "POP AF"},
 	0xF2: {fn: func(c *CPU) { c.opLDH_A_aC() }, Name: "LDH A, [C]"},
 	0xF3: {fn: func(c *CPU) { c.opDI() }, Name: "DI"},
-	0xF4: {fn: func(c *CPU) { c.opNOP() }, Name: ""}, // 未定義
+	0xF4: {fn: func(c *CPU) { c.opNOP(); c.IsPanic = true }, Name: ""}, // 未定義
 	0xF5: {fn: func(c *CPU) { c.opPUSH_AF() }, Name: "PUSH AF"},
 	0xF6: {fn: func(c *CPU) { c.opOR_A_n8() }, Name: "OR A, n8"},
 	0xF7: {fn: func(c *CPU) { c.opRST_30() }, Name: "RST $30"},
@@ -258,13 +258,13 @@ var OpTable = [256]OpEntry{
 	0xF9: {fn: func(c *CPU) { c.opLD_SP_HL() }, Name: "LD SP, HL"},
 	0xFA: {fn: func(c *CPU) { c.opLD_A_aa16() }, Name: "LD A, [a16]"},
 	0xFB: {fn: func(c *CPU) { c.opEI() }, Name: "EI"},
-	0xFC: {fn: func(c *CPU) { c.opNOP() }, Name: ""}, // 未定義
-	0xFD: {fn: func(c *CPU) { c.opNOP() }, Name: ""}, // 未定義
+	0xFC: {fn: func(c *CPU) { c.opNOP(); c.IsPanic = true }, Name: ""}, // 未定義
+	0xFD: {fn: func(c *CPU) { c.opNOP(); c.IsPanic = true }, Name: ""}, // 未定義
 	0xFE: {fn: func(c *CPU) { c.opCP_A_n8() }, Name: "CP A, n8"},
 	0xFF: {fn: func(c *CPU) { c.opRST_38() }, Name: "RST $38"},
 }
 
-var cbTable = [256]OpEntry{
+var CBTable = [256]OpEntry{
 	0x00: {fn: func(c *CPU) { c.opRLC_B() }, Name: "RLC B"},           // 00
 	0x01: {fn: func(c *CPU) { c.opRLC_C() }, Name: "RLC C"},           // 01
 	0x02: {fn: func(c *CPU) { c.opRLC_D() }, Name: "RLC D"},           // 02

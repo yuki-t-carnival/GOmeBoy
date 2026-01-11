@@ -23,8 +23,8 @@ func (c *CPU) opEI() { // FB
 
 // --------------------------------- STOP --------------------------------------
 func (c *CPU) opSTOP_n8() { // 10
-	c.pc++
-	c.IsStopped = true
+	_ = c.fetch()
+	//c.IsStopped = true // TODO: Implement the STOP
 	c.cycles += 4
 }
 
@@ -35,7 +35,7 @@ func (c *CPU) opHALT() { // 76
 	pending := ieReg & ifReg
 
 	if !c.isIMEEnabled && (pending != 0) {
-		c.isHaltBug = true
+		//c.isHaltBug = true // TODO: Implement the HALT bug
 		c.isHalted = false
 	} else {
 		c.isHalted = true
@@ -46,8 +46,8 @@ func (c *CPU) opHALT() { // 76
 // --------------------------------- PREFIX ------------------------------------
 func (c *CPU) opPREFIX() { // CB
 	op := c.fetch()
-	cbTable[op].fn(c)
-	// c.cycles += 4 // 各CB命令で加算済み
+	CBTable[op].fn(c)
+	// c.cycles += 4 // Added by each CB prefixed instrs
 }
 
 // ----------------------------------- LD r16, n16 -----------------------------
@@ -228,8 +228,8 @@ func (c *CPU) opLD_HL_SP_p_e8() { // F8
 	sp := c.sp
 	result := uint16(int32(sp) + int32(offset))
 
-	//c.f = 0 // Z, N, H, C = 0
-	// 👍uint8(int8(-1))==0xFF, ❌uint16(-1)==0xFFFF
+	// Good: uint8(int8(-1)) == 0xFF
+	// Bad:  uint16(-1) == 0xFFFF
 	uOffset := uint16(uint8(offset))
 
 	c.SetFlagZ(false)
@@ -504,8 +504,8 @@ func (c *CPU) opADD_SP_e8() { // E8
 	sp := c.sp
 	result := uint16(int32(sp) + int32(offset))
 
-	//c.f = 0 // Z, N, H, C = 0
-	// 👍uint8(int8(-1))==0xFF, ✖uint16(-1)==0xFFFF
+	// Good: uint8(int8(-1)) == 0xFF
+	// Bad:  uint16(-1)      == 0xFFFF
 	uOffset := uint16(uint8(offset))
 
 	c.SetFlagZ(false)
@@ -731,7 +731,7 @@ func (c *CPU) and_r(b byte) {
 	}
 
 	c.SetFlagN(false)
-	c.SetFlagH(true) // ANDは必ず半キャリー扱い
+	c.SetFlagH(true) // AND is always half carry
 	c.SetFlagC(false)
 
 	c.a = result
@@ -756,7 +756,7 @@ func (c *CPU) opAND_A_aHL() { // A6
 	}
 
 	c.SetFlagN(false)
-	c.SetFlagH(true) // ANDは必ず半キャリー扱い
+	c.SetFlagH(true) // AND is always half carry
 	c.SetFlagC(false)
 
 	c.a = result
@@ -774,7 +774,7 @@ func (c *CPU) opAND_A_n8() { // E6
 	}
 
 	c.SetFlagN(false)
-	c.SetFlagH(true) // ANDは必ず半キャリー扱い
+	c.SetFlagH(true) // AND is always half carry
 	c.SetFlagC(false)
 
 	c.a = result
@@ -1112,7 +1112,7 @@ func (c *CPU) opDAA() { // 27
 	oldA := a
 
 	if c.GetFlagN() {
-		// SUB の後の場合
+		// After SUB
 		if c.GetFlagH() {
 			a -= 0x06
 		}
@@ -1120,7 +1120,7 @@ func (c *CPU) opDAA() { // 27
 			a -= 0x60
 		}
 	} else {
-		// ADD の後の場合
+		// After ADD
 		if c.GetFlagH() || ((a & 0x0F) > 9) {
 			a += 0x06
 		}
@@ -1160,7 +1160,6 @@ func (c *CPU) opCCF() { // 3F
 	} else {
 		c.SetFlagC(true)
 	}
-
 	c.SetFlagN(false)
 	c.SetFlagH(false)
 	c.cycles += 4
@@ -1175,6 +1174,7 @@ func (c *CPU) push(rr uint16) {
 	c.write(c.sp, high)
 	c.sp--
 	c.write(c.sp, low)
+
 }
 
 func (c *CPU) opPUSH_BC() { // C5
@@ -1286,7 +1286,6 @@ func (c *CPU) opRST_38() { // FF
 	c.push(c.pc)
 	c.pc = 0x0038
 	c.cycles += 16
-	//c.IsPanic = true // デバッグ用
 }
 
 // ---------------------------- POP r16 ----------------------------------------

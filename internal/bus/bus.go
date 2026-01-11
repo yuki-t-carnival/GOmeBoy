@@ -12,6 +12,10 @@ type Bus struct {
 	Timer  *timer.Timer
 	Joypad *joypad.Joypad
 	Memory *memory.Memory
+
+	// DMA Transfer
+	IsDMATransferInProgress bool
+	DMATransferIndex        int // 0 ~ 159
 }
 
 // Memory Map Adress
@@ -120,7 +124,8 @@ func NewBus(m *memory.Memory) *Bus {
 	return bus
 }
 
-// I/Oレジスタとのやりとりはここで｡それ以外はMemory.Read()で｡
+// Bus accesses the I/O, VRAM, OAM,
+// and request other accesses to Memory
 func (b *Bus) Read(addr uint16) byte {
 	switch {
 	// PPU
@@ -175,12 +180,16 @@ func (b *Bus) Read(addr uint16) byte {
 	case addr == IE:
 		return b.Memory.Read(addr) | 0xE0
 
+	// Memory
+	case addr == SVBK_WBK:
+		return b.Memory.ReadWRAMBank()
 	default:
 		return b.Memory.Read(addr)
 	}
 }
 
-// I/Oレジスタとのやりとりはここで｡それ以外はMemory.Read()で｡
+// Bus accesses the I/O, VRAM, OAM,
+// and request other accesses to Memory
 func (b *Bus) Write(addr uint16, val byte) {
 	switch {
 	// PPU
@@ -191,30 +200,33 @@ func (b *Bus) Write(addr uint16, val byte) {
 	case addr == VBK:
 		b.PPU.SetVBK(val)
 	case addr == DMA:
-		b.dmaTransfer(val)
-		b.PPU.SetDMA(val)
+		b.PPU.SetDMA(val) // Acts as a trigger to start a DMA transfer
+		if val <= 0xDF {
+			b.IsDMATransferInProgress = true
+			b.DMATransferIndex = 0
+		}
 	case addr == LCDC:
-		b.PPU.SetLCDC(val) // todo:LCDの停止(bit7の立ち下げ)はVBlank期間中のみ可能
+		b.PPU.SetLCDC(val) // TODO: LCD&PPU can be disabled only during VBlank period
 	case addr == STAT:
 		b.PPU.SetSTAT(val)
-	case addr == LY:
-		// write禁止
-	case addr == LYC:
-		b.PPU.SetLYC(val)
-	case addr == OBP0:
-		b.PPU.SetOBP0(val)
-	case addr == OBP1:
-		b.PPU.SetOBP1(val)
-	case addr == BGP:
-		b.PPU.SetBGP(val)
-	case addr == WY:
-		b.PPU.SetWY(val)
-	case addr == WX:
-		b.PPU.SetWX(val)
 	case addr == SCY:
 		b.PPU.SetSCY(val)
 	case addr == SCX:
 		b.PPU.SetSCX(val)
+	case addr == LY:
+		// Writing is prohibited
+	case addr == LYC:
+		b.PPU.SetLYC(val)
+	case addr == BGP:
+		b.PPU.SetBGP(val)
+	case addr == OBP0:
+		b.PPU.SetOBP0(val)
+	case addr == OBP1:
+		b.PPU.SetOBP1(val)
+	case addr == WY:
+		b.PPU.SetWY(val)
+	case addr == WX:
+		b.PPU.SetWX(val)
 
 	// Timer
 	case addr == DIV:
@@ -236,19 +248,27 @@ func (b *Bus) Write(addr uint16, val byte) {
 	case addr == IE:
 		b.Memory.Write(IE, val&0x1F)
 
+	// Memory
+	case addr == SVBK_WBK:
+		b.Memory.WriteWRAMBank(val)
 	default:
 		b.Memory.Write(addr, val)
 	}
 }
 
-// DMA転送の対象データをPPUに渡す
-func (b *Bus) dmaTransfer(hi byte) {
-	data := [160]byte{}
-	if hi <= 0xDF {
-		base := uint16(hi) << 8
-		for i := 0; i < 160; i++ {
-			data[i] = b.Read(base + uint16(i))
-		}
+// During DMA Transfer, CPU is stopped and 4 cycles elapse for each byte transferred
+func (b *Bus) DMATransfer() {
+	if !(b.PPU.GetDMA() <= 0xDF) || !b.IsDMATransferInProgress {
+		panic("DMA transfer error")
 	}
-	b.PPU.DMATransfer(&data)
+	srcBase := uint16(b.PPU.GetDMA()) << 8
+	i := uint16(b.DMATransferIndex)
+	v := b.Read(srcBase + i)
+	b.PPU.WriteOAM(i, v)
+	b.DMATransferIndex++
+	if b.DMATransferIndex == 160 {
+		b.IsDMATransferInProgress = false
+		b.DMATransferIndex = 0
+		return
+	}
 }

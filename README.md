@@ -1,4 +1,4 @@
-# GoMeBoy
+# GOmeBoy
 
 ## Description
 
@@ -9,7 +9,7 @@ It was developed with assistance from **ChatGPT**.
 🔇 Sound is **not supported**.  
 🎮 Only **DMG** and **MBC1** cartridges are supported.
 
-![GoMeBoy thumbnail](thumbnail.png)
+![GOmeBoy thumbnail](thumbnail.png)
 
 ---
 
@@ -49,17 +49,11 @@ Edit the configuration file:
 
 ---
 
-## Passed ROMs
+## Playable / Passed ROMs
 
+- Tobu Tobu Girl
+- Sushi Nights GB
+- mattcurrie/dmg-acid2.gb
 - Blargg's test ROMs  
-  - cpu_instrs/01-specials.gb  
-  - cpu_instrs/02-interrupts.gb  
-  - instr_timing/instr_timing.gb
-
----
-
-## Partially Working / Failed ROMs
-
-- △ mattcurrie/dmg-acid2.gb
-- △ Sushi Nights GB
-- ✕ Tobu Tobu Girl
+  - cpu_instrs.gb    
+  - instr_timing.gb

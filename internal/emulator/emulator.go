@@ -9,14 +9,16 @@ import (
 )
 
 const (
-	MaxCycles = 70221 // 1フレームのクロック(cycle)数
+	CyclesPerFrame = 70221
+	RunMode        = 0
+	PauseMode      = 1
 )
 
 type Emulator struct {
 	CPU *cpu.CPU
 
 	IsPaused     bool
-	isPauseMode  bool // (実際に停止中かどうかは別｡pauseMode==trueでもステップ実行はできる｡)
+	emuMode      int
 	isKeyP       bool
 	isKeyS       bool
 	isKeyEsc     bool
@@ -25,38 +27,35 @@ type Emulator struct {
 	isPrevKeyEsc bool
 }
 
-func NewEmulator(rom []byte) *Emulator {
-	m := memory.NewMemory(rom)
+func NewEmulator(rom, sav []byte) *Emulator {
+	m := memory.NewMemory(rom, sav)
 	b := bus.NewBus(m)
 	c := cpu.NewCPU(b)
 	c.Tracer = cpu.NewTracer(c)
 
 	e := &Emulator{
-		CPU:         c,
-		isPauseMode: false,
-		IsPaused:    false,
+		CPU:      c,
+		emuMode:  RunMode,
+		IsPaused: false,
 	}
 	return e
 }
 
-// Gameboyを1フレーム実行する
+// Run one Game Boy frame
 func (e *Emulator) RunFrame() int {
 	cycles := 0
-	for cycles < MaxCycles {
+	for cycles < CyclesPerFrame {
 		e.updateEbitenKeys()
-		e.updateEmuState()
-
-		if e.IsPaused {
+		e.updateEmuMode()
+		if e.CPU.IsPanic || e.isKeyEsc { // for debug
+			e.panicDump()
+			return -1
+		} else if e.IsPaused {
 			return 0
 		}
 
 		c := e.CPU.Step()
 		e.CPU.Tracer.Record(e.CPU)
-		if e.CPU.IsPanic || e.isKeyEsc {
-			e.panicDump()
-			return -1
-		}
-
 		e.CPU.Bus.Timer.Step(c, e.CPU.IsStopped)
 		e.CPU.Bus.PPU.Step(c)
 		cycles += c
@@ -65,15 +64,20 @@ func (e *Emulator) RunFrame() int {
 	return 0
 }
 
-// ゲーム状態を更新（PキーでPAUSE切替､PAUSE中Sキーでステップ実行）
-func (e *Emulator) updateEmuState() {
+// KeyP: Toggle Run/Pause Mode
+// KeyS: Run a single step
+func (e *Emulator) updateEmuMode() {
 	if e.isKeyP {
-		e.isPauseMode = !e.isPauseMode
+		if e.emuMode == RunMode {
+			e.emuMode = PauseMode
+		} else {
+			e.emuMode = RunMode
+		}
 	}
-	e.IsPaused = e.isPauseMode && !e.isKeyS
+	e.IsPaused = (e.emuMode == PauseMode) && !e.isKeyS
 }
 
-// パニックで終了するときは､直前のCPUの状態をコンソールに出力する
+// In case of Panic, CPU status is output to the console
 func (e *Emulator) panicDump() {
 	e.CPU.Tracer.Dump()
 }

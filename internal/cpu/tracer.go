@@ -8,13 +8,14 @@ const TraceSize = 256
 
 type Tracer struct {
 	buf   [TraceSize]TraceEntry
-	index int // 次に使うべきindex
+	index int // of the next buffer to be used
 }
 
 type TraceEntry struct {
 	a, f, b, c, d, e, h, l byte
 	sp, pc                 uint16
-	op                     byte
+	op                     uint16
+	opName                 string
 }
 
 func NewTracer(c *CPU) *Tracer {
@@ -23,45 +24,62 @@ func NewTracer(c *CPU) *Tracer {
 	return t
 }
 
-// 現在のCPUレジスタの状態をリングバッファに保存する
+// Save the current CPU Registers state in a ring buffer
 func (t *Tracer) Record(c *CPU) {
-	t.buf[t.index] = TraceEntry{
-		pc: c.pc,
-		a:  c.a,
-		f:  c.f,
-		b:  c.b,
-		c:  c.c,
-		d:  c.d,
-		e:  c.e,
-		h:  c.h,
-		l:  c.l,
-		sp: c.sp,
-		op: c.read(c.pc),
+	op := uint16(c.read(c.pc))
+	var opName string
+	if op == 0xCB {
+		nextOp := c.read(c.pc + 1)
+		opName = CBTable[nextOp].Name
+		op = 0xCB00 | uint16(nextOp)
+	} else {
+		opName = OpTable[op].Name
 	}
-	t.index = (t.index + 1) % TraceSize // リングバッファ
+	t.buf[t.index] = TraceEntry{
+		pc:     c.pc,
+		a:      c.a,
+		f:      c.f,
+		b:      c.b,
+		c:      c.c,
+		d:      c.d,
+		e:      c.e,
+		h:      c.h,
+		l:      c.l,
+		sp:     c.sp,
+		op:     op,
+		opName: opName,
+	}
+	t.index = (t.index + 1) % TraceSize // ring buffer
 }
 
-// コンソールにCPUバッファをすべて出力する
+// Output all CPU log buffers to console.
 func (t *Tracer) Dump() {
 	for i := range TraceSize {
-		idx := (t.index + i) % TraceSize // +1 は一番古いダンプから出力するため
+		idx := (t.index + i) % TraceSize // Output from the oldest dump
 		buf := t.buf[idx]
 		fmt.Printf(
-			"PC:%04X "+"OP:%02X "+
-				"A:%02X "+"F:%02X "+
-				"BC:%02X%02X "+"DE:%02X%02X "+
-				"HL:%02X%02X "+"SP:%04X\n",
-			buf.pc, buf.op,
+			"PC:%04X "+
+				"A:%02X "+
+				"F:%02X "+
+				"BC:%02X%02X "+
+				"DE:%02X%02X "+
+				"HL:%02X%02X "+
+				"SP:%04X "+
+				"Op:%04X "+
+				"OpName:%s\n",
+			buf.pc,
 			buf.a, buf.f,
 			buf.b, buf.c,
 			buf.d, buf.e,
 			buf.h, buf.l,
 			buf.sp,
+			buf.op,
+			buf.opName,
 		)
 	}
 }
 
-// 画面表示用のCPUステータスを[]stringで取得
+// Get CPU status strings for the debug screen
 func (t *Tracer) GetCPUInfo() []string {
 	var idx int
 	if t.index == 0 {
@@ -72,12 +90,12 @@ func (t *Tracer) GetCPUInfo() []string {
 	buf := t.buf[idx]
 	var str []string
 	str = append(str, fmt.Sprintf("PC:%04X", buf.pc))
-	str = append(str, fmt.Sprintf("OP:%04X", buf.op))
-	str = append(str, fmt.Sprintf("A :%02X", buf.a))
-	str = append(str, fmt.Sprintf("F :%02X", buf.f))
+	str = append(str, fmt.Sprintf("AF:%02X%02X", buf.a, buf.f))
 	str = append(str, fmt.Sprintf("BC:%02X%02X", buf.b, buf.c))
 	str = append(str, fmt.Sprintf("DE:%02X%02X", buf.d, buf.e))
 	str = append(str, fmt.Sprintf("HL:%02X%02X", buf.h, buf.l))
 	str = append(str, fmt.Sprintf("SP:%04X", buf.sp))
+	str = append(str, fmt.Sprintf("Op:%04X", buf.op))
+	str = append(str, fmt.Sprintf("OpName:%s", buf.opName))
 	return str
 }

@@ -1,39 +1,48 @@
 package memory
 
 type Memory struct {
-	rom  []byte           // 生ROM全部読み込み
-	eram [16][0x2000]byte // External RAM
-	wram [0x2000]byte     // CGBは最大8バンク
+	rom  []byte          // =.gb data
+	ERAM [0x8000]byte    // =External RAM, SRAM
+	wram [8][0x1000]byte // DMG=1bank, CGB=8bank
 	hram [0x7F]byte
 	io   [0x80]byte
 	ie   byte
 
-	// Cartridge Header関連
+	// Cartridge Header
 	cartTypeID   byte   // $0147
 	romSizeID    byte   // $0148
 	ramSizeID    byte   // $0149
-	CartTypeName string // 上の~IDの説明
+	CartTypeName string // Description of the above ID values
 	ROMSizeName  string
 	RAMSizeName  string
 
-	// MBC関連のレジスタ
+	// MBC Registers
 	bankingMode byte
 	bankHigh    byte
 	romBankLow  byte
 	isRAMEnable bool
+
+	wramBank     byte // only CGB mode
+	romBankCount byte
+
+	// For debug
+	//ROMBankHistory []byte
+	//RAMBankHistory []byte
 }
 
-func NewMemory(rom []byte) *Memory {
+func NewMemory(rom, sav []byte) *Memory {
 	mem := &Memory{
 		rom:        rom,
 		romBankLow: 1,
 	}
+	copy(mem.ERAM[:], sav)
 	mem.cartTypeID = mem.rom[0x0147]
 	mem.CartTypeName = cartTypeNames[mem.cartTypeID]
 	mem.romSizeID = mem.rom[0x0148]
 	mem.ROMSizeName = romSizeNames[mem.romSizeID]
 	mem.ramSizeID = mem.rom[0x0149]
 	mem.RAMSizeName = ramSizeNames[mem.ramSizeID]
+	mem.romBankCount = byte(cap(mem.rom) / 0x4000)
 	return mem
 }
 
@@ -92,30 +101,29 @@ var ramSizeNames = [6]string{
 	0x05: "64KiB(8banks/8KiB)",
 }
 
-// Busで処理しないとき､ここでReadする
+// Called from Bus.Read()
 func (m *Memory) Read(addr uint16) byte {
 	switch {
 	case addr < 0x8000:
 		return m.readROM(addr)
 
 	case addr >= 0x8000 && addr < 0xA000:
-		return 0xFF // VRAMはBus経由で
+		return 0xFF // Access VRAM via Bus.Read()
 
 	case addr >= 0xA000 && addr < 0xC000:
 		return m.readERAM(addr)
 
 	case addr >= 0xC000 && addr < 0xD000:
-		return m.wram[addr-0xC000]
-
+		return m.wram[0][addr-0xC000]
 	case addr >= 0xD000 && addr < 0xE000:
-		return m.wram[addr-0xD000]
+		return m.wram[max(m.wramBank, 1)][addr-0xD000]
 
 	case addr >= 0xE000 && addr < 0xFE00:
 		mirror := addr - 0x2000
 		return m.Read(mirror)
 
 	case addr >= 0xFE00 && addr < 0xFEA0:
-		return 0xFF // OAMはBus経由で
+		return 0xFF // Access OAM via Bus.Read()
 
 	case addr >= 0xFEA0 && addr < 0xFF00:
 		return 0xFF
@@ -134,32 +142,32 @@ func (m *Memory) Read(addr uint16) byte {
 	}
 }
 
-// Busで処理しないとき､ここでWriteする
+// Called from Bus.Write()
 func (m *Memory) Write(addr uint16, val byte) {
 	switch {
 	case addr < 0x8000:
-		m.writeROMArea(addr, val) // Bank切り替えがあるので､別関数で処理
+		m.writeROMArea(addr, val) // Consider banking
 
 	case addr >= 0x8000 && addr < 0xA000:
-		return // VRAMはBus経由で
+		return // Access VRAM via Bus.Write()
 
 	case addr >= 0xA000 && addr < 0xC000:
 		m.writeERAMArea(addr, val)
 
 	case addr >= 0xC000 && addr < 0xD000:
-		m.wram[addr-0xC000] = val
-
+		m.wram[0][addr-0xC000] = val
 	case addr >= 0xD000 && addr < 0xE000:
-		m.wram[addr-0xD000] = val
+		m.wram[max(m.wramBank, 1)][addr-0xD000] = val
 
 	case addr >= 0xE000 && addr < 0xFE00:
 		mirror := addr - 0x2000
 		m.Write(mirror, val)
 
 	case addr >= 0xFE00 && addr < 0xFEA0:
-		// OAMはBus経由で
+		return // Access OAM via Bus.Write()
 
 	case addr >= 0xFEA0 && addr < 0xFF00:
+		return
 
 	case addr >= 0xFF00 && addr < 0xFF80:
 		m.io[addr-0xFF00] = val
@@ -172,30 +180,41 @@ func (m *Memory) Write(addr uint16, val byte) {
 	}
 }
 
-// Bankも考慮してROMをReadする
-// MBC1だけ対応（不完全）
+func (m *Memory) ReadWRAMBank() byte {
+	return m.wramBank & 0x07
+}
+
+func (m *Memory) WriteWRAMBank(val byte) {
+	m.wramBank = val & 0x07
+}
+
+// Read from ROM in the current bank
+// (Only compatible with MBC1)
 func (m *Memory) readROM(addr uint16) byte {
 	switch {
 	case addr < 0x4000: // ROM Bank $20/$40/$60
-		/* bank := byte(0) // 本来の処理
+		bank := byte(0)
 		if m.bankingMode == 1 {
 			bank = m.bankHigh << 5
-		} */
-		bank := 0 // tobu.gbで落ちるので､決め打ち｡
+		}
+		if bank >= m.romBankCount {
+			bank %= m.romBankCount
+		}
 		return m.rom[0x4000*uint32(bank)+uint32(addr)]
 
 	case addr >= 0x4000 && addr < 0x8000: // ROM Bank 01-7F
-
-		//bank := (m.bankHigh << 5) | m.romBankLow // 本来の処理
-		bank := m.romBankLow & 0xF // tobu.gbが落ちるので､bank16までにマスク
+		bank := (m.bankHigh << 5) | m.romBankLow
+		if bank >= m.romBankCount {
+			bank %= m.romBankCount
+		}
 		return m.rom[0x4000*uint32(bank)+uint32(addr-0x4000)]
 	default:
 		return 0xFF
 	}
 }
 
-// Bankも考慮してExternal RAMをReadする
-// MBC1だけ対応
+// Read from ERAM in the current bank
+// (Only compatible with MBC1)
 func (m *Memory) readERAM(addr uint16) byte {
 	switch {
 	case addr >= 0xA000 && addr < 0xC000:
@@ -206,14 +225,15 @@ func (m *Memory) readERAM(addr uint16) byte {
 		if m.bankingMode == 1 {
 			bank = m.bankHigh
 		}
-		return m.eram[bank][addr-0xA000]
+		return m.ERAM[uint16(bank)*0x2000+addr-0xA000]
 	default:
 		return 0xFF
 	}
 }
 
-// ROM領域にWriteしたときの処理
-// （=MBCレジスタへの書き込み｡MBC1のみ対応）
+// Write to ROM area
+// (it is not a write to the ROM, but a write to the MBC register)
+// (Only compatible with MBC1)
 func (m *Memory) writeROMArea(addr uint16, val byte) {
 	switch {
 	case addr < 0x2000: // RAM Enable
@@ -236,8 +256,8 @@ func (m *Memory) writeROMArea(addr uint16, val byte) {
 	}
 }
 
-// External RAM領域にWriteしたときの処理
-// （MBC1のみ対応）
+// Write to ERAM area
+// (Only compatible with MBC1)
 func (m *Memory) writeERAMArea(addr uint16, val byte) {
 	switch {
 	case addr >= 0xA000 && addr < 0xC000:
@@ -248,6 +268,6 @@ func (m *Memory) writeERAMArea(addr uint16, val byte) {
 		if m.bankingMode == 1 {
 			bank = m.bankHigh
 		}
-		m.eram[bank][addr-0xA000] = val
+		m.ERAM[uint16(bank)*0x2000+addr-0xA000] = val
 	}
 }

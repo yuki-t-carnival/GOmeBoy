@@ -7,18 +7,21 @@ type Timer struct {
 	tac  byte
 
 	// Internal Counter
-	divCounter uint16 // 外部からはDIVとして上位8bitのみ見える
-	prevDIV    uint16 // 立ち下がりbit監視のため､過去DIVを保持
+	divCounter uint16 // The upper 8 bits of divCounter == DIV register
+	prevDIV    uint16
+
+	// TIMA overflow delay
+	isOverflow bool
+	cycleCount int
 
 	// Others
 	HasIRQ           bool
 	isPrevCPUStopped bool
-	overflowDelay    int
 }
 
 func NewTimer() *Timer {
 	return &Timer{
-		divCounter: 0x00, // 実装上0でOK（実機は0xAB相当）
+		divCounter: 0x00,
 		tima:       0x00,
 		tma:        0x00,
 		tac:        0xF8,
@@ -26,20 +29,23 @@ func NewTimer() *Timer {
 }
 
 func (t *Timer) Step(cycles int, isCPUStopped bool) {
-	// テストが通らないので､cpuCyclesを1ずつ分解して実行
+	// process every cycle to pass the test ROM
 	for i := 0; i < cycles; i++ {
 
-		// TIMA OverflowのDelay処理
-		if t.overflowDelay > 0 {
-			t.overflowDelay -= 1
-			if t.overflowDelay <= 0 {
+		// Processing after TIMA overflow is delayed by 4 cycles
+		// and is executed here
+		if t.isOverflow {
+			t.cycleCount++
+			if t.cycleCount >= 4 {
 				t.tima = t.tma
 				t.HasIRQ = true
+				t.isOverflow = false
+				t.cycleCount = 0
 			}
 		}
-		t.prevDIV = t.divCounter
 
-		// STOPに入った直後､diVCounterがリセットされる
+		// When STOP occurs, the divCounter is reset
+		t.prevDIV = t.divCounter
 		if !t.isPrevCPUStopped && isCPUStopped {
 			t.divCounter = 0
 		} else {
@@ -47,10 +53,9 @@ func (t *Timer) Step(cycles int, isCPUStopped bool) {
 		}
 		t.isPrevCPUStopped = isCPUStopped
 
-		// 以下､TIMAカウントが有効の場合の処理
-		// DIVの対象ビットが立ち下がることで､TIMAが加算される
+		// TIMA is incremented when the specified bit of DIV falls
 		tac := t.tac
-		if tac&(1<<2) != 0 { // divCounterの立ち下がり監視対象bit
+		if tac&(1<<2) != 0 { // Gets the target bit of divCounter
 			var checkBit int
 			switch tac & 0x03 {
 			case 0b00:
@@ -64,12 +69,13 @@ func (t *Timer) Step(cycles int, isCPUStopped bool) {
 			}
 			prev := (t.prevDIV >> checkBit) & 1
 			now := (t.divCounter >> checkBit) & 1
-			if prev == 1 && now == 0 { // 対象bitが立ち下がったか?
+			if prev == 1 && now == 0 { // Did the target bit fall?
 				if t.tima == 0xFF {
-					t.tima = 0          // Overflow時､即tima=0にはなる｡
-					t.overflowDelay = 4 // ただし､TIMA=TMAセットと､IRQは､4サイクル遅れる
+					t.tima = 0
+					t.isOverflow = true // tima=tma and IRQ are executed after a delay
+					t.cycleCount = 0
 				} else {
-					t.tima++ // TIMAカウントする
+					t.tima++
 				}
 			}
 		}
