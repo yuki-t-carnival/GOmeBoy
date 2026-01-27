@@ -100,6 +100,7 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 	if g.isDebugScreenEnabled {
 		screenWidth *= 2
 	}
+
 	return screenWidth, screenHeight
 }
 

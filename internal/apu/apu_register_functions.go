@@ -43,6 +43,9 @@ func (a *APU) GetNR12() byte {
 	return a.nr12
 }
 func (a *APU) SetNR12(val byte) {
+	if val&0xF8 == 0 {
+		a.nr52 &^= 1 << 0
+	}
 	a.nr12 = val
 }
 func (a *APU) GetNR13() byte {
@@ -81,6 +84,9 @@ func (a *APU) GetNR22() byte {
 	return a.nr22
 }
 func (a *APU) SetNR22(val byte) {
+	if val&0xF8 == 0 {
+		a.nr52 &^= 1 << 1
+	}
 	a.nr22 = val
 }
 func (a *APU) GetNR23() byte {
@@ -160,6 +166,9 @@ func (a *APU) GetNR42() byte {
 	return a.nr42
 }
 func (a *APU) SetNR42(val byte) {
+	if val&0xF8 == 0 {
+		a.nr52 &^= 1 << 3
+	}
 	a.nr42 = val
 }
 func (a *APU) GetNR43() byte {

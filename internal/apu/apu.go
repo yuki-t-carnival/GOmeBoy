@@ -354,7 +354,7 @@ func (a *APU) execLengthTimer(ch, controlRegister byte, lengthTimer *int, sample
 		(*sampleCounter)++
 		for *sampleCounter >= SamplesPerLengthTimerTick {
 			*sampleCounter -= SamplesPerLengthTimerTick
-			if *lengthTimer == maxLength {
+			if *lengthTimer >= maxLength {
 				a.nr52 &^= 1 << (ch - 1) // Disable chX.
 			} else {
 				(*lengthTimer)++
